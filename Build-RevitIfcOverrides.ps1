@@ -2,7 +2,8 @@
 param(
     [int[]] $Years = @(2019, 2020, 2021, 2022, 2023),
     [string] $OutputDirectory = 'Override',
-    [string] $MsBuildPath
+    [string] $MsBuildPath,
+    [switch] $NoPause
 )
 
 Set-StrictMode -Version Latest
@@ -90,6 +91,7 @@ function Resolve-BuildRef {
     throw "Branch '$Branch' was not found locally or at origin."
 }
 
+try {
 if (-not (Get-Command 'git.exe' -ErrorAction SilentlyContinue)) {
     throw 'Git was not found in PATH.'
 }
@@ -251,3 +253,14 @@ if ($failedBuilds.Count -gt 0) {
 }
 
 Write-Host "All requested assemblies are available in '$outputRoot'."
+}
+finally {
+    if (-not $NoPause) {
+        try {
+            [void](Read-Host 'Press Enter to close')
+        }
+        catch {
+            Write-Warning "Could not pause before exit: $($_.Exception.Message)"
+        }
+    }
+}
