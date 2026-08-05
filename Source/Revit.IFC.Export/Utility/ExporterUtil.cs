@@ -1502,6 +1502,52 @@ namespace Revit.IFC.Export.Utility
          return (string.IsNullOrWhiteSpace(enumTypeValue) || (string.Compare(enumTypeValue, "NOTDEFINED", true) == 0));
       }
 
+      internal static IFCExportInfoPair GetExportTypeFromSharedParameters(Element element, IFCEntityType restrictedGroup)
+      {
+         const string exportAsEntity = "IFCExportAs";
+         const string exportAsType = "IFCExportType";
+         const string exportAsTypeLegacy = "IFCType";
+
+         IFCExportInfoPair exportType = IFCExportInfoPair.UnKnown;
+
+         string symbolClassName;
+         ParameterUtil.GetStringValueFromElementOrSymbol(element, exportAsEntity, out symbolClassName);
+
+         string predefType = null;
+         if (!string.IsNullOrEmpty(symbolClassName))
+         {
+            ExportEntityAndPredefinedType(symbolClassName, out symbolClassName, out predefType);
+
+            // Ignore the value if we can't process it.
+            IFCExportInfoPair overrideExportType = ElementFilteringUtil.GetExportTypeFromClassName(symbolClassName);
+            if (!overrideExportType.IsUnKnown &&
+               IfcSchemaEntityTree.IsSubTypeOf(ExporterCacheManager.ExportOptionsCache.FileVersion,
+                  overrideExportType.ExportInstance.ToString(), restrictedGroup.ToString(), strict: false))
+            {
+               exportType = overrideExportType;
+            }
+         }
+
+         string pdefFromParam = null;
+         ParameterUtil.GetStringValueFromElementOrSymbol(element, exportAsType, out pdefFromParam);
+         if (string.IsNullOrEmpty(pdefFromParam))
+         {
+            // To support old parameter
+            ParameterUtil.GetStringValueFromElementOrSymbol(element, exportAsTypeLegacy, out pdefFromParam);
+         }
+
+         if (!string.IsNullOrEmpty(pdefFromParam))
+         {
+            exportType.ValidatedPredefinedType = pdefFromParam;
+         }
+         else if (!string.IsNullOrEmpty(predefType))
+         {
+            exportType.ValidatedPredefinedType = predefType;
+         }
+
+         return exportType;
+      }
+
       /// <summary>
       /// Gets export type for an element in pair information of the IfcEntity and its type.
       /// </summary>
