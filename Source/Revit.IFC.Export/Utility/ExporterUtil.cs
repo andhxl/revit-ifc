@@ -1802,7 +1802,7 @@ namespace Revit.IFC.Export.Utility
          return pdefFromParam;
       }
 
-      private static IFCExportInfoPair GetExportTypeFromLegacyParameter(Element element,
+      internal static IFCExportInfoPair GetExportTypeFromLegacyParameter(Element element,
          IFCEntityType restrictedGroup)
       {
          if (element == null || element is ElementType)
