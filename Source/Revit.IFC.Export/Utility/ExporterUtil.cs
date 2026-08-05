@@ -1806,7 +1806,7 @@ namespace Revit.IFC.Export.Utility
          return (string.IsNullOrWhiteSpace(enumTypeValue) || (string.Compare(enumTypeValue, "NOTDEFINED", true) == 0));
       }
 
-      private static IFCExportInfoPair GetExportTypeFromSharedParmaters(Element element, IFCEntityType restrictedGroup)
+      internal static IFCExportInfoPair GetExportTypeFromSharedParameters(Element element, IFCEntityType restrictedGroup)
       {
          const string exportAsEntity = "IFCExportAs";
          const string exportAsType = "IFCExportType";
@@ -1959,7 +1959,7 @@ namespace Revit.IFC.Export.Utility
          // 3. Check the shared parameters "IfcExportAs", "IfcExportType" and "IfcType".
          if (exportType.IsUnKnown)
          {
-            exportType = GetExportTypeFromSharedParmaters(element, restrictedGroup);
+            exportType = GetExportTypeFromSharedParameters(element, restrictedGroup);
          }
 
          // 4. Look at class specified by the IFC Export Options table in step 1.

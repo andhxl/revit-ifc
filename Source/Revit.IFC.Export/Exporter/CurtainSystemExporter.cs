@@ -318,6 +318,28 @@ namespace Revit.IFC.Export.Exporter
          return true;
       }
 
+      private static IFCExportInfoPair GetCurtainHostExportType(Element element, out bool isOverridden)
+      {
+         isOverridden = false;
+
+         IFCEntityType defaultExportType = IFCEntityType.IfcRoof;
+         if (element is Wall || element is CurtainSystem || IsLegacyCurtainElement(element))
+            defaultExportType = IFCEntityType.IfcCurtainWall;
+
+         if (element is Wall)
+         {
+            IFCExportInfoPair overrideExportType = ExporterUtil.GetExportTypeFromSharedParameters(
+               element, IFCEntityType.IfcProduct);
+            if (!overrideExportType.IsUnKnown)
+            {
+               isOverridden = true;
+               return overrideExportType;
+            }
+         }
+
+         return new IFCExportInfoPair(defaultExportType);
+      }
+
       /// <summary>
       /// Export Curtain Walls and Roofs.
       /// </summary>
@@ -327,11 +349,8 @@ namespace Revit.IFC.Export.Exporter
       /// <param name="productWrapper">The ProductWrapper.</param>
       private static void ExportBase(ExporterIFC exporterIFC, ICollection<ElementId> allSubElements, Element element, ProductWrapper wrapper)
       {
-         Common.Enums.IFCEntityType elementClassTypeEnum = Common.Enums.IFCEntityType.IfcRoof;
-         if (element is Wall || element is CurtainSystem || IsLegacyCurtainElement(element))
-            elementClassTypeEnum = Common.Enums.IFCEntityType.IfcCurtainWall;
-         else if (element is RoofBase)
-            elementClassTypeEnum = Common.Enums.IFCEntityType.IfcRoof;
+         IFCExportInfoPair exportType = GetCurtainHostExportType(element, out bool isOverridden);
+         IFCEntityType elementClassTypeEnum = exportType.ExportInstance;
 
          if (ExporterCacheManager.ExportOptionsCache.IsElementInExcludeList(elementClassTypeEnum))
             return;
@@ -362,7 +381,16 @@ namespace Revit.IFC.Export.Exporter
                string elemGUID = GUIDUtil.CreateGUID(element);
                if (element is Wall || element is CurtainSystem || IsLegacyCurtainElement(element))
                {
-                  elemHnd = IFCInstanceExporter.CreateCurtainWall(exporterIFC, element, elemGUID, ownerHistory, localPlacement, prodRepHnd, null);
+                  if (exportType.ExportInstance == IFCEntityType.IfcCurtainWall)
+                  {
+                     elemHnd = IFCInstanceExporter.CreateCurtainWall(exporterIFC, element, elemGUID, ownerHistory,
+                        localPlacement, prodRepHnd, isOverridden ? exportType.ValidatedPredefinedType : null);
+                  }
+                  else
+                  {
+                     elemHnd = IFCInstanceExporter.CreateGenericIFCEntity(exportType, exporterIFC, element, elemGUID,
+                        ownerHistory, localPlacement, prodRepHnd);
+                  }
                }
                else if (element is RoofBase)
                {
@@ -379,7 +407,7 @@ namespace Revit.IFC.Export.Exporter
                if (IFCAnyHandleUtil.IsNullOrHasNoValue(elemHnd))
                   return;
 
-               wrapper.AddElement(element, elemHnd, setter, null, true, null);
+               wrapper.AddElement(element, elemHnd, setter, null, true, isOverridden ? exportType : null);
 
                bool canExportCurtainWallAsContainer = CanExportCurtainWallAsContainer(allSubElements, element.Document);
                IFCAnyHandle rep = null;
@@ -402,7 +430,7 @@ namespace Revit.IFC.Export.Exporter
                   IFCInstanceExporter.CreateRelAggregates(file, guid, ownerHistory, null, null, elemHnd, relatedElementIdSet);
                }
 
-               ExportCurtainWallType(exporterIFC, wrapper, elemHnd, element);
+               ExportCurtainHostType(exporterIFC, wrapper, elemHnd, element, exportType, isOverridden);
                SpaceBoundingElementUtil.RegisterSpaceBoundingElementHandle(exporterIFC, elemHnd, element.Id, ElementId.InvalidElementId);
             }
             finally
@@ -667,6 +695,21 @@ namespace Revit.IFC.Export.Exporter
          }
 
          return curtainGridSet;
+      }
+
+      private static void ExportCurtainHostType(ExporterIFC exporterIFC, ProductWrapper wrapper,
+         IFCAnyHandle elementHandle, Element element, IFCExportInfoPair exportType, bool isOverridden)
+      {
+         if (!isOverridden || exportType.ExportInstance == IFCEntityType.IfcCurtainWall)
+         {
+            ExportCurtainWallType(exporterIFC, wrapper, elementHandle, element);
+            return;
+         }
+
+         IFCAnyHandle elementType = ExporterUtil.CreateGenericTypeFromElement(
+            element, exportType, exporterIFC.GetFile(), wrapper);
+         if (!IFCAnyHandleUtil.IsNullOrHasNoValue(elementType))
+            ExporterCacheManager.TypeRelationsCache.Add(elementType, elementHandle);
       }
 
       /// <summary>
