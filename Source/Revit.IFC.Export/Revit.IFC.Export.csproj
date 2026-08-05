@@ -54,12 +54,6 @@
     <DefineConstants>TRACE;IFC_OPENSOURCE;</DefineConstants>
   </PropertyGroup>
   <ItemGroup>
-    <Reference Include="RevitAPI">
-      <HintPath>..\..\..\..\..\Program Files\Autodesk\Revit 2020\RevitAPI.dll</HintPath>
-    </Reference>
-    <Reference Include="RevitAPIIFC">
-      <HintPath>..\..\..\..\..\Program Files\Autodesk\Revit 2020\RevitAPIIFC.dll</HintPath>
-    </Reference>
     <Reference Include="System" />
     <Reference Include="System.Web.Extensions" />
     <Reference Include="System.XML" />
@@ -341,6 +335,12 @@
     </Antlr4>
   </ItemGroup>
   <ItemGroup>
+    <PackageReference Include="Nice3point.Revit.Api.RevitAPI">
+      <Version>2020.*</Version>
+    </PackageReference>
+    <PackageReference Include="Nice3point.Revit.Api.RevitAPIIFC">
+      <Version>2020.*</Version>
+    </PackageReference>
     <PackageReference Include="Antlr4.CodeGenerator">
       <Version>4.6.6</Version>
       <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
