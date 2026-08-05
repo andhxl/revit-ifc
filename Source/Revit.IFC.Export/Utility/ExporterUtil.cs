@@ -1802,6 +1802,32 @@ namespace Revit.IFC.Export.Utility
          return pdefFromParam;
       }
 
+      private static IFCExportInfoPair GetExportTypeFromLegacyParameter(Element element,
+         IFCEntityType restrictedGroup)
+      {
+         if (element == null || element is ElementType)
+            return IFCExportInfoPair.UnKnown;
+
+         ParameterUtil.GetStringValueFromElement(element, "IFCExportAs", out string symbolClassName);
+         if (string.IsNullOrEmpty(symbolClassName))
+            return IFCExportInfoPair.UnKnown;
+
+         ExportEntityAndPredefinedType(symbolClassName, out symbolClassName, out string predefType);
+
+         IFCExportInfoPair exportType = ElementFilteringUtil.GetExportTypeFromClassName(symbolClassName);
+         if (exportType.IsUnKnown ||
+            !IfcSchemaEntityTree.IsSubTypeOf(ExporterCacheManager.ExportOptionsCache.FileVersion,
+               exportType.ExportInstance, restrictedGroup))
+         {
+            return IFCExportInfoPair.UnKnown;
+         }
+
+         if (!string.IsNullOrEmpty(predefType))
+            exportType.PredefinedType = predefType;
+
+         return exportType;
+      }
+
       /// <summary>
       /// Gets the export entity and predefined type information as reported by the
       /// IFC_EXPORT_ELEMENT*_AS parameter.
@@ -1931,12 +1957,13 @@ namespace Revit.IFC.Export.Utility
          // 1. Check specifically to see if the user has marked the category as "Not exported"
          // in the IFC Export Options table.  If so, this overrides all other settings.
          // 2. For the special case of an element in a group, check if it in an IfcFurniture group.
-         // 3. Check the parameters IFC_EXPORT_ELEMENT*_AS.
-         // 4. Look at class specified by the IFC Export Options table in step 1, if set.
-         // 5. Check at a pre-defined mapping from Revit category to IFC entity and pre-defined type.
-         // 6. Check whether the intended Entity type is inside the export exclusion set.
-         // 7. Check whether we override IfcBuildingElementProxy/Unknown values with structural known values.
-         // 8. Check to see if we should override the ValidatedPredefinedType from IFC_EXPORT_PREDEFINEDTYPE*.
+         // 3. Check the instance parameter IFCExportAs.
+         // 4. Check the parameters IFC_EXPORT_ELEMENT*_AS.
+         // 5. Look at class specified by the IFC Export Options table in step 1, if set.
+         // 6. Check at a pre-defined mapping from Revit category to IFC entity and pre-defined type.
+         // 7. Check whether the intended Entity type is inside the export exclusion set.
+         // 8. Check whether we override IfcBuildingElementProxy/Unknown values with structural known values.
+         // 9. Check to see if we should override the ValidatedPredefinedType from IFC_EXPORT_PREDEFINEDTYPE*.
 
          // Steps start below.
 
@@ -1952,19 +1979,27 @@ namespace Revit.IFC.Export.Utility
          if (categoryId == ElementId.InvalidElementId)
             return IFCExportInfoPair.UnKnown;
 
-         // 2. If Element is contained within a Group that is exported as IfcFurniture, it should be 
+         // 2. If Element is contained within a Group that is exported as IfcFurniture, it should be
          // exported as an IfcSystemFurnitureElement, regardless of other settings.
          IFCExportInfoPair exportType = GetExportTypeForFurniture(exporterIFC, element);
 
-         // 3. Check the parameters IFC_EXPORT_ELEMENT*_AS.
-         bool isExportTypeDefinedInParameters = false;
+         // 3. Check the instance parameter IFCExportAs using the Revit 2022 shared parameter logic.
+         bool usesLegacyIFCExportAsParameter = false;
+         if (exportType.IsUnKnown)
+         {
+            exportType = GetExportTypeFromLegacyParameter(element, restrictedGroup);
+            usesLegacyIFCExportAsParameter = !exportType.IsUnKnown;
+         }
+
+         // 4. Check the parameters IFC_EXPORT_ELEMENT*_AS.
+         bool isExportTypeDefinedInParameters = usesLegacyIFCExportAsParameter;
          if (exportType.IsUnKnown)
          {
             exportType = GetIFCExportElementParameterInfo(element, restrictedGroup);
             isExportTypeDefinedInParameters = !exportType.IsUnKnown;
          }
 
-         // 4. Look at class specified by the IFC Export Options table in step 1.
+         // 5. Look at class specified by the IFC Export Options table in step 1.
          if (exportType.IsUnKnown && !string.IsNullOrEmpty(ifcClassName))
          {
             if (string.IsNullOrEmpty(enumTypeValue))
@@ -1977,7 +2012,7 @@ namespace Revit.IFC.Export.Utility
             }
          }
 
-         // 5. Check at a pre-defined mapping from Revit category to IFC entity and pre-defined type.
+         // 6. Check at a pre-defined mapping from Revit category to IFC entity and pre-defined type.
          if (exportType.IsUnKnown)
          {
             exportType = ElementFilteringUtil.GetExportTypeFromCategoryId(categoryId);
@@ -1985,21 +2020,24 @@ namespace Revit.IFC.Export.Utility
                enumTypeValue = exportType.PredefinedType;
          }
 
-         // 6. Check whether the intended Entity type is inside the export exclusion set.  If it is,
+         // 7. Check whether the intended Entity type is inside the export exclusion set.  If it is,
          // we are done - we won't export it.
          if (ExporterCacheManager.ExportOptionsCache.IsElementInExcludeList(exportType.ExportInstance))
             return IFCExportInfoPair.UnKnown;
 
-         // 7. Check whether we override IfcBuildingElementProxy/Unknown values with 
+         // 8. Check whether we override IfcBuildingElementProxy/Unknown values with
          // structural known values.
          if (!isExportTypeDefinedInParameters)
             exportType = OverrideExportTypeForStructuralFamilies(element, exportType);
 
-         // 8. Check to see if we should override the ValidatedPredefinedType from
-         // IFC_EXPORT_PREDEFINEDTYPE*.
-         string pdefFromParam = GetExportTypeFromTypeParameter(element, null);
-         if (!string.IsNullOrEmpty(pdefFromParam))
-            enumTypeValue = pdefFromParam;
+         // 9. Check to see if we should override the ValidatedPredefinedType from
+         // IFC_EXPORT_PREDEFINEDTYPE*.  IFCExportAs can contain its own predefined type after a dot.
+         if (!usesLegacyIFCExportAsParameter)
+         {
+            string pdefFromParam = GetExportTypeFromTypeParameter(element, null);
+            if (!string.IsNullOrEmpty(pdefFromParam))
+               enumTypeValue = pdefFromParam;
+         }
 
          if (!string.IsNullOrEmpty(enumTypeValue))
             exportType.PredefinedType = enumTypeValue;

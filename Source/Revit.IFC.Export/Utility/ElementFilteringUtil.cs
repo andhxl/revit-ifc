@@ -195,6 +195,17 @@ namespace Revit.IFC.Export.Utility
       }
 
       /// <summary>
+      /// Checks if the legacy instance parameter IFCExportAs is set to "DontExport".
+      /// </summary>
+      /// <param name="element">The element.</param>
+      /// <returns>True if the element shouldn't be exported.</returns>
+      private static bool IsLegacyIFCExportAsSetToDontExport(Element element)
+      {
+         ParameterUtil.GetStringValueFromElement(element, "IFCExportAs", out string exportAs);
+         return string.Equals(exportAs?.Trim(), "DontExport", StringComparison.OrdinalIgnoreCase);
+      }
+
+      /// <summary>
       /// Checks if an element should be exported based on parameter settings.
       /// </summary>
       /// <param name="element">The element.</param>
@@ -207,6 +218,10 @@ namespace Revit.IFC.Export.Utility
          IFCExportElement value = (exportElement != null) ? (IFCExportElement)exportElement.AsInteger() : IFCExportElement.ByType;
          if (value != IFCExportElement.ByType)
             return value;
+
+         // Preserve the Revit 2022 instance parameter behavior before falling back to the element type.
+         if (IsLegacyIFCExportAsSetToDontExport(element))
+            return IFCExportElement.No;
 
          // Element is ByType - look at the ElementType, if it exists.
          Parameter exportElementType = elementType?.get_Parameter(BuiltInParameter.IFC_EXPORT_ELEMENT_TYPE);
