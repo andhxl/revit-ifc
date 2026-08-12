@@ -357,7 +357,7 @@
       <Version>4.6.6</Version>
     </PackageReference>
     <PackageReference Include="GeometryGymIFC">
-      <Version>0.0.20</Version>
+      <Version>0.0.22</Version>
     </PackageReference>
     <PackageReference Include="Newtonsoft.Json">
       <Version>10.0.3</Version>
