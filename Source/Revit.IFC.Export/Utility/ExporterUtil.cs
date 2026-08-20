@@ -957,7 +957,7 @@ namespace Revit.IFC.Export.Utility
             ElementId elemId = ExporterCacheManager.HandleToElementCache.Find(prodHnd);
             if (elemId != ElementId.InvalidElementId)
             {
-               exportInfo = ExporterCacheManager.ElementToHandleCache.FindPredefinedType(elemId);
+               exportInfo = ExporterCacheManager.ElementToHandleCache.FindPredefinedType(prodHnd, elemId);
             }
 
             if (exportInfo == null)
