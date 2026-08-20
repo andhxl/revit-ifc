@@ -15,7 +15,7 @@ using System.Reflection;
 [assembly: AssemblyCulture("")]
 
 [assembly: AssemblyVersion("19.5.1.0")]
-[assembly: AssemblyFileVersion("19.5.1.0")]
+[assembly: AssemblyFileVersion("19.5.1.1")]
 
 #endif
 
