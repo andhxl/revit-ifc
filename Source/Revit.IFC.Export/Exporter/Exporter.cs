@@ -709,10 +709,17 @@ namespace Revit.IFC.Export.Exporter
          }
 
          //WriteIFCExportedElements
+         DateTime exportStartTime = default;
          if (m_Writer != null)
          {
+            exportStartTime = DateTime.Now;
             string categoryName = CategoryUtil.GetCategoryName(element);
-            m_Writer.WriteLine(string.Format("{0},{1},{2}", element.Id, string.IsNullOrEmpty(categoryName) ? "null" : categoryName, element.GetType().Name));
+            m_Writer.WriteLine(string.Format(
+               "{0:yyyy-MM-dd HH:mm:ss.fff} | START | {1} | {2} | {3}",
+               exportStartTime,
+               element.Id,
+               string.IsNullOrEmpty(categoryName) ? "null" : categoryName,
+               element.GetType().Name));
          }
 
          try
@@ -732,6 +739,16 @@ namespace Revit.IFC.Export.Exporter
          {
             HandleUnexpectedException(ex, element);
             return false;
+         }
+
+         if (m_Writer != null)
+         {
+            DateTime exportEndTime = DateTime.Now;
+            m_Writer.WriteLine(string.Format(
+               "{0:yyyy-MM-dd HH:mm:ss.fff} | DONE | {1} | {2} ms",
+               exportEndTime,
+               element.Id,
+               (long)(exportEndTime - exportStartTime).TotalMilliseconds));
          }
 
          return true;
@@ -1136,7 +1153,17 @@ namespace Revit.IFC.Export.Exporter
          string writeIFCExportedElementsVar = Environment.GetEnvironmentVariable("WriteIFCExportedElements");
          if (writeIFCExportedElementsVar != null && writeIFCExportedElementsVar.Length > 0)
          {
-            m_Writer = new StreamWriter(@"c:\ifc-output-filters.txt");
+            string logDirectory = Path.Combine(
+               Path.GetTempPath(),
+               typeof(Exporter).Assembly.GetName().Name,
+               System.Diagnostics.Process.GetCurrentProcess().Id.ToString());
+
+            Directory.CreateDirectory(logDirectory);
+
+            m_Writer = new StreamWriter(Path.Combine(logDirectory, "ifc-export-elements.log"))
+            {
+               AutoFlush = true
+            };
          }
 
          // cache options
