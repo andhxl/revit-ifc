@@ -622,10 +622,17 @@ namespace Revit.IFC.Export.Exporter
          }
 
          //WriteIFCExportedElements
+         DateTime exportStartTime = default;
          if (m_Writer != null)
          {
-            Category category = element.Category;
-            m_Writer.WriteLine(String.Format("{0},{1},{2}", element.Id, category == null ? "null" : category.Name, element.GetType().Name));
+            exportStartTime = DateTime.Now;
+            string categoryName = element.Category?.Name;
+            m_Writer.WriteLine(string.Format(
+               "{0:yyyy-MM-dd HH:mm:ss.fff} | START | {1} | {2} | {3}",
+               exportStartTime,
+               element.Id,
+               string.IsNullOrEmpty(categoryName) ? "null" : categoryName,
+               element.GetType().Name));
          }
 
          try
@@ -645,6 +652,16 @@ namespace Revit.IFC.Export.Exporter
          {
             HandleUnexpectedException(ex, exporterIFC, element);
             return false;
+         }
+
+         if (m_Writer != null)
+         {
+            DateTime exportEndTime = DateTime.Now;
+            m_Writer.WriteLine(string.Format(
+               "{0:yyyy-MM-dd HH:mm:ss.fff} | DONE | {1} | {2} ms",
+               exportEndTime,
+               element.Id,
+               (long)(exportEndTime - exportStartTime).TotalMilliseconds));
          }
 
          return true;
@@ -1106,7 +1123,17 @@ namespace Revit.IFC.Export.Exporter
          String writeIFCExportedElementsVar = Environment.GetEnvironmentVariable("WriteIFCExportedElements");
          if (writeIFCExportedElementsVar != null && writeIFCExportedElementsVar.Length > 0)
          {
-            m_Writer = new StreamWriter(@"c:\ifc-output-filters.txt");
+            string logDirectory = Path.Combine(
+               Path.GetTempPath(),
+               typeof(Exporter).Assembly.GetName().Name,
+               System.Diagnostics.Process.GetCurrentProcess().Id.ToString());
+
+            Directory.CreateDirectory(logDirectory);
+
+            m_Writer = new StreamWriter(Path.Combine(logDirectory, "ifc-export-elements.log"))
+            {
+               AutoFlush = true
+            };
          }
 
          IFCFileModelOptions modelOptions = CreateIFCFileModelOptions(exporterIFC);
