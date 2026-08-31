@@ -51,8 +51,7 @@ namespace Revit.IFC.Export.Exporter
          ElementId materialId = overrideMaterialId != ElementId.InvalidElementId ? overrideMaterialId :
              GetBestMaterialIdFromGeometryOrParameter(geometryObject, exporterIFC, element);
 
-         if (materialId != ElementId.InvalidElementId)
-            exporterIFC.SetMaterialIdForCurrentExportState(materialId);
+         exporterIFC.SetMaterialIdForCurrentExportState(materialId);
 
          return materialId;
       }
