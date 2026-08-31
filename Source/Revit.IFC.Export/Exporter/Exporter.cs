@@ -101,6 +101,47 @@ namespace Revit.IFC.Export.Exporter
       // Used for debugging tool "WriteIFCExportedElements"
       private StreamWriter m_Writer;
 
+      private void Log(string message)
+      {
+         if (m_Writer != null)
+            m_Writer.WriteLine("{0:yyyy-MM-dd HH:mm:ss.fff} | {1}", DateTime.Now, message);
+      }
+
+      private void LogStageStart(string stageName)
+      {
+         Log("STAGE START | " + stageName);
+      }
+
+      private void LogStageDone(string stageName)
+      {
+         Log("STAGE DONE | " + stageName);
+      }
+
+      private void LogError(string prefix, Exception exception)
+      {
+         string message = exception.Message.Replace('\r', ' ').Replace('\n', ' ');
+         Log(prefix + " | " + exception.GetType().Name + " | " + message);
+      }
+
+      private void InitializeLogWriter()
+      {
+         string writeIFCExportedElementsVar = Environment.GetEnvironmentVariable("WriteIFCExportedElements");
+         if (string.IsNullOrEmpty(writeIFCExportedElementsVar))
+            return;
+
+         string logDirectory = Path.Combine(
+            Path.GetTempPath(),
+            typeof(Exporter).Assembly.GetName().Name,
+            System.Diagnostics.Process.GetCurrentProcess().Id.ToString());
+
+         Directory.CreateDirectory(logDirectory);
+
+         m_Writer = new StreamWriter(Path.Combine(logDirectory, "diagnostics.log"))
+         {
+            AutoFlush = true
+         };
+      }
+
       private IFCFile m_IfcFile;
 
       // Allow a derived class to add Element exporter routines.
@@ -143,17 +184,33 @@ namespace Revit.IFC.Export.Exporter
 
       private void ExportHostDocument(ExporterIFC exporterIFC, Document document, View filterView)
       {
+         LogStageStart("ExportHostDocument");
+
+         LogStageStart("BeginExport");
          BeginExport(exporterIFC, filterView);
+         LogStageDone("BeginExport");
+
+         LogStageStart("BeginHostDocumentExport");
          BeginHostDocumentExport(exporterIFC, document);
+         LogStageDone("BeginHostDocumentExport");
 
+         LogStageStart("ExportHostDocument.Elements");
          m_ElementExporter?.Invoke(exporterIFC, document);
+         LogStageDone("ExportHostDocument.Elements");
 
+         LogStageStart("EndHostDocumentExport");
          EndHostDocumentExport(exporterIFC, document);
+         LogStageDone("EndHostDocumentExport");
+
+         LogStageDone("ExportHostDocument");
       }
 
       private void ExportLinkedDocument(ExporterIFC exporterIFC, ElementId linkId, Document document,
          string guid, Transform linkTrf)
       {
+         string linkedDocumentStage = "ExportLinkedDocument | id=" + linkId.IntegerValue;
+         LogStageStart(linkedDocumentStage);
+
          Transaction transaction = new Transaction(document, "Export IFC Link");
          transaction.Start();
          FailureHandlingOptions failureOptions = transaction.GetFailureHandlingOptions();
@@ -161,11 +218,23 @@ namespace Revit.IFC.Export.Exporter
          transaction.SetFailureHandlingOptions(failureOptions);
 
          ExporterStateManager.CurrentLinkId = linkId;
+         LogStageStart("BeginLinkedDocumentExport");
          BeginLinkedDocumentExport(exporterIFC, document, guid);
-         m_ElementExporter?.Invoke(exporterIFC, document);
-         EndLinkedDocumentExport(exporterIFC, document, linkTrf);
+         LogStageDone("BeginLinkedDocumentExport");
 
+         LogStageStart("ExportLinkedDocument.Elements");
+         m_ElementExporter?.Invoke(exporterIFC, document);
+         LogStageDone("ExportLinkedDocument.Elements");
+
+         LogStageStart("EndLinkedDocumentExport");
+         EndLinkedDocumentExport(exporterIFC, document, linkTrf);
+         LogStageDone("EndLinkedDocumentExport");
+
+         LogStageStart("ExportLinkedDocument.Rollback");
          transaction.RollBack();
+         LogStageDone("ExportLinkedDocument.Rollback");
+
+         LogStageDone(linkedDocumentStage);
       }
 
       /// <summary>
@@ -182,8 +251,13 @@ namespace Revit.IFC.Export.Exporter
          ExporterCacheManager.Clear(true);
          ExporterStateManager.Clear();
 
+         bool exportCompleted = false;
+
          try
          {
+            InitializeLogWriter();
+            Log("EXPORT START");
+
             ExporterCacheManager.ExporterIFC = exporterIFC;
 
             IFCAnyHandleUtil.IFCStringTooLongWarn += (_1) => { document.Application.WriteJournalComment(_1, true); };
@@ -194,6 +268,7 @@ namespace Revit.IFC.Export.Exporter
 
             ExportHostDocument(exporterIFC, document, filterView);
 
+            LogStageStart("ExportFederatedLinks");
             IDictionary<int, string> linkInfos =
                ExporterCacheManager.ExportOptionsCache.FederatedLinkInfo;
             if (linkInfos != null)
@@ -203,6 +278,7 @@ namespace Revit.IFC.Export.Exporter
                   // TODO: Filter out link types that we don't support, and warn, like we
                   // do when exporting separate links.
                   ElementId linkId = new ElementId(linkInfo.Key);
+                  Log("LINK CHECK | id=" + linkId.IntegerValue);
                   RevitLinkInstance rvtLinkInstance = document.GetElement(linkId) as RevitLinkInstance;
                   if (rvtLinkInstance == null)
                      continue;
@@ -229,29 +305,52 @@ namespace Revit.IFC.Export.Exporter
                   }
                }
             }
+            LogStageDone("ExportFederatedLinks");
 
             IFCFileDocumentInfo ifcFileDocumentInfo = new IFCFileDocumentInfo(document);
             WriteIFCFile(m_IfcFile, ifcFileDocumentInfo);
+            exportCompleted = true;
          }
-         catch
+         catch (Exception ex)
          {
+            LogError("EXPORT ERROR", ex);
+
             // As of Revit 2022.1, there are no EDM errors to report, because we use ODA.
             FailureMessage fm = new FailureMessage(BuiltInFailures.ExportFailures.IFCFatalExportError);
             document.PostFailure(fm);
          }
          finally
          {
+            LogStageStart("Cleanup");
+
+            LogStageStart("Cleanup.CacheClear");
             ExporterCacheManager.Clear(true);
             ExporterStateManager.Clear();
+            LogStageDone("Cleanup.CacheClear");
 
+            LogStageStart("Cleanup.DelegateClear");
             DelegateClear();
             IFCAnyHandleUtil.EventClear();
             IFCDataUtil.EventClear();
+            LogStageDone("Cleanup.DelegateClear");
 
-            m_Writer?.Close();
+            LogStageStart("Cleanup.IFCFileClose");
+            if (m_IfcFile != null)
+            {
+               m_IfcFile.Close();
+               m_IfcFile = null;
+            }
+            LogStageDone("Cleanup.IFCFileClose");
 
-            m_IfcFile?.Close();
-            m_IfcFile = null;
+            LogStageDone("Cleanup");
+            if (exportCompleted)
+               Log("EXPORT DONE");
+
+            if (m_Writer != null)
+            {
+               m_Writer.Close();
+               m_Writer = null;
+            }
          }
       }
 
@@ -290,11 +389,14 @@ namespace Revit.IFC.Export.Exporter
       /// <param name="document">The Revit document.</param>
       protected void ExportAdvanceSteelElements(ExporterIFC exporterIFC, Autodesk.Revit.DB.Document document)
       {
+         LogStageStart("ExportAdvanceSteelElements");
+
          // verify if Steel elements should be exported
          if (ExporterCacheManager.ExportOptionsCache.IncludeSteelElements)
          {
             try
             {
+               LogStageStart("ExportAdvanceSteelElements.LoadAssembly");
                //Firstly, looking for SteelConnections assembly in addin folder.
                string dllPath = Assembly.GetExecutingAssembly().Location;
                Assembly assembly;
@@ -303,20 +405,35 @@ namespace Revit.IFC.Export.Exporter
                else
                   assembly = Assembly.LoadFrom(AppDomain.CurrentDomain.BaseDirectory + @"\Addins\SteelConnections\Autodesk.SteelConnections.ASIFC.dll");
 
+               LogStageDone("ExportAdvanceSteelElements.LoadAssembly");
                if (assembly != null)
                {
+                  LogStageStart("ExportAdvanceSteelElements.GetExporter");
                   Type type = assembly.GetType("Autodesk.SteelConnections.ASIFC.ASExporter");
+                  MethodInfo method = type == null ? null : type.GetMethod("ExportASElements");
+                  LogStageDone("ExportAdvanceSteelElements.GetExporter");
                   if (type != null)
                   {
-                     MethodInfo method = type.GetMethod("ExportASElements");
                      if (method != null)
+                     {
+                        LogStageStart("ExportAdvanceSteelElements.Invoke");
                         method.Invoke(null, new object[] { exporterIFC, document });
+                        LogStageDone("ExportAdvanceSteelElements.Invoke");
+                     }
                   }
                }
             }
-            catch
-            { }
+            catch (Exception ex)
+            {
+               LogError("STAGE ERROR | ExportAdvanceSteelElements", ex);
+            }
          }
+         else
+         {
+            Log("STAGE SKIP | ExportAdvanceSteelElements | IncludeSteelElements=false");
+         }
+
+         LogStageDone("ExportAdvanceSteelElements");
       }
 
       /// <summary>
@@ -409,8 +526,11 @@ namespace Revit.IFC.Export.Exporter
 
       protected void ExportSpatialElements(ExporterIFC exporterIFC, Document document)
       {
+         LogStageStart("ExportSpatialElements");
+
          // Create IfcSite first here using the first visible TopographySurface if any, if not create a default one.
          // Site and Building need to be created first to ensure containment override to work
+         LogStageStart("ExportSpatialElements.Topography");
          FilteredElementCollector topoElementCollector = GetExportElementCollector(document, true);
          List<Type> topoSurfaceType = new List<Type>() { typeof(TopographySurface) };
          ElementMulticlassFilter multiclassFilter = new ElementMulticlassFilter(topoSurfaceType);
@@ -427,7 +547,9 @@ namespace Revit.IFC.Export.Exporter
                   break; // Process only the first exportable one to create the IfcSite
             }
          }
+         LogStageDone("ExportSpatialElements.Topography");
 
+         LogStageStart("ExportSpatialElements.DefaultSite");
          if (ExporterCacheManager.SiteHandle == null || IFCAnyHandleUtil.IsNullOrHasNoValue(ExporterCacheManager.SiteHandle))
          {
             using (ProductWrapper productWrapper = ProductWrapper.Create(exporterIFC, true))
@@ -436,13 +558,16 @@ namespace Revit.IFC.Export.Exporter
                ExporterUtil.ExportRelatedProperties(exporterIFC, document.ProjectInformation, productWrapper);
             }
          }
+         LogStageDone("ExportSpatialElements.DefaultSite");
 
          // Create IfcBuilding first here
+         LogStageStart("ExportSpatialElements.Building");
          if (NeedBuilding())
          {
             IFCAnyHandle buildingPlacement = CreateBuildingPlacement(exporterIFC.GetFile());
             IFCAnyHandle buildingHnd = CreateBuildingFromProjectInfo(exporterIFC, document, buildingPlacement);
 		 }
+         LogStageDone("ExportSpatialElements.Building");
 
          ExportOptionsCache exportOptionsCache = ExporterCacheManager.ExportOptionsCache;
          View filterView = exportOptionsCache.FilterViewForExport;
@@ -454,11 +579,16 @@ namespace Revit.IFC.Export.Exporter
 
          ISet<ElementId> exportedSpaces = null;
          if (exportOptionsCache.SpaceBoundaryLevel == 2)
+         {
+            LogStageStart("ExportSpatialElements.SecondLevelSpaceBoundaries");
             exportedSpaces = SpatialElementExporter.ExportSpatialElement2ndLevel(this, exporterIFC, document);
+            LogStageDone("ExportSpatialElements.SecondLevelSpaceBoundaries");
+         }
 
          // Export all spatial elements for no or 1st level room boundaries; for 2nd level, export spaces that 
          // couldn't be exported above.
          // Note that FilteredElementCollector is one use only, so we need to create a new one here.
+         LogStageStart("ExportSpatialElements.SpatialElementCollection");
          FilteredElementCollector spatialElementCollector = GetExportElementCollector(document, useFilterViewInCollector);
          SpatialElementExporter.InitializeSpatialElementGeometryCalculator(document);
          ElementFilter spatialElementFilter = ElementFilteringUtil.GetSpatialElementFilter(document, exporterIFC);
@@ -490,12 +620,19 @@ namespace Revit.IFC.Export.Exporter
                continue;
             ExportElement(exporterIFC, element);
          }
+         LogStageDone("ExportSpatialElements.SpatialElementCollection");
 
+         LogStageStart("ExportSpatialElements.DestroyGeometryCalculator");
          SpatialElementExporter.DestroySpatialElementGeometryCalculator();
+         LogStageDone("ExportSpatialElements.DestroyGeometryCalculator");
+
+         LogStageDone("ExportSpatialElements");
       }
 
       protected void ExportNonSpatialElements(ExporterIFC exporterIFC, Document document)
       {
+         LogStageStart("ExportNonSpatialElements");
+         LogStageStart("ExportNonSpatialElements.BuildCollector");
          FilteredElementCollector otherElementCollector = GetExportElementCollector(document, true);
 
          ElementFilter nonSpatialElementFilter = ElementFilteringUtil.GetNonSpatialElementFilter(document, exporterIFC);
@@ -503,6 +640,9 @@ namespace Revit.IFC.Export.Exporter
 
          int numOfOtherElement = otherElementCollector.Count();
          IList<Element> otherElementCollListCopy = new List<Element>(otherElementCollector);
+         LogStageDone("ExportNonSpatialElements.BuildCollector");
+
+         LogStageStart("ExportNonSpatialElements.Elements");
          int otherElementCollectorCount = 1;
          foreach (Element element in otherElementCollListCopy)
          {
@@ -510,6 +650,8 @@ namespace Revit.IFC.Export.Exporter
             otherElementCollectorCount++;
             ExportElement(exporterIFC, element);
          }
+         LogStageDone("ExportNonSpatialElements.Elements");
+         LogStageDone("ExportNonSpatialElements");
       }
 
       /// <summary>
@@ -519,15 +661,34 @@ namespace Revit.IFC.Export.Exporter
       /// <param name="exporterIFC">The exporterIFC class.</param>
       protected void ExportContainers(ExporterIFC exporterIFC, Autodesk.Revit.DB.Document document)
       {
+         LogStageStart("ExportContainers");
          using (ExporterStateManager.ForceElementExport forceElementExport = new ExporterStateManager.ForceElementExport())
          {
+            LogStageStart("ExportContainers.CachedRailings");
             ExportCachedRailings(exporterIFC, document);
+            LogStageDone("ExportContainers.CachedRailings");
+
+            LogStageStart("ExportContainers.CachedFabricAreas");
             ExportCachedFabricAreas(exporterIFC, document);
+            LogStageDone("ExportContainers.CachedFabricAreas");
+
+            LogStageStart("ExportContainers.Trusses");
             ExportTrusses(exporterIFC, document);
+            LogStageDone("ExportContainers.Trusses");
+
+            LogStageStart("ExportContainers.BeamSystems");
             ExportBeamSystems(exporterIFC, document);
+            LogStageDone("ExportContainers.BeamSystems");
+
+            LogStageStart("ExportContainers.AreaSchemes");
             ExportAreaSchemes(exporterIFC, document);
+            LogStageDone("ExportContainers.AreaSchemes");
+
+            LogStageStart("ExportContainers.Zones");
             ExportZones(exporterIFC, document);
+            LogStageDone("ExportContainers.Zones");
          }
+         LogStageDone("ExportContainers");
       }
 
       /// <summary>
@@ -644,13 +805,21 @@ namespace Revit.IFC.Export.Exporter
 
       protected void ExportGrids(ExporterIFC exporterIFC, Autodesk.Revit.DB.Document document)
       {
+         LogStageStart("ExportGrids");
          // Export the grids
+         LogStageStart("ExportGrids.GridExporter");
          GridExporter.Export(exporterIFC, document);
+         LogStageDone("ExportGrids.GridExporter");
+         LogStageDone("ExportGrids");
       }
 
       protected void ExportConnectors(ExporterIFC exporterIFC, Autodesk.Revit.DB.Document document)
       {
+         LogStageStart("ExportConnectors");
+         LogStageStart("ExportConnectors.ConnectorExporter");
          ConnectorExporter.Export(exporterIFC);
+         LogStageDone("ExportConnectors.ConnectorExporter");
+         LogStageDone("ExportConnectors");
       }
 
       /// <summary>
@@ -708,15 +877,12 @@ namespace Revit.IFC.Export.Exporter
             return false;
          }
 
-         //WriteIFCExportedElements
-         DateTime exportStartTime = default;
          if (m_Writer != null)
          {
-            exportStartTime = DateTime.Now;
             string categoryName = CategoryUtil.GetCategoryName(element);
             m_Writer.WriteLine(string.Format(
-               "{0:yyyy-MM-dd HH:mm:ss.fff} | START | {1} | {2} | {3}",
-               exportStartTime,
+               "{0:yyyy-MM-dd HH:mm:ss.fff} | ELEMENT START | {1} | {2} | {3}",
+               DateTime.Now,
                element.Id,
                string.IsNullOrEmpty(categoryName) ? "null" : categoryName,
                element.GetType().Name));
@@ -737,18 +903,17 @@ namespace Revit.IFC.Export.Exporter
          }
          catch (System.Exception ex)
          {
+            LogError("ELEMENT ERROR | " + element.Id, ex);
             HandleUnexpectedException(ex, element);
             return false;
          }
 
          if (m_Writer != null)
          {
-            DateTime exportEndTime = DateTime.Now;
             m_Writer.WriteLine(string.Format(
-               "{0:yyyy-MM-dd HH:mm:ss.fff} | DONE | {1} | {2} ms",
-               exportEndTime,
-               element.Id,
-               (long)(exportEndTime - exportStartTime).TotalMilliseconds));
+               "{0:yyyy-MM-dd HH:mm:ss.fff} | ELEMENT DONE | {1}",
+               DateTime.Now,
+               element.Id));
          }
 
          return true;
@@ -1150,22 +1315,6 @@ namespace Revit.IFC.Export.Exporter
          ElementFilteringUtil.InitCategoryVisibilityCache();
          NamingUtil.InitNameIncrNumberCache();
 
-         string writeIFCExportedElementsVar = Environment.GetEnvironmentVariable("WriteIFCExportedElements");
-         if (writeIFCExportedElementsVar != null && writeIFCExportedElementsVar.Length > 0)
-         {
-            string logDirectory = Path.Combine(
-               Path.GetTempPath(),
-               typeof(Exporter).Assembly.GetName().Name,
-               System.Diagnostics.Process.GetCurrentProcess().Id.ToString());
-
-            Directory.CreateDirectory(logDirectory);
-
-            m_Writer = new StreamWriter(Path.Combine(logDirectory, "ifc-export-elements.log"))
-            {
-               AutoFlush = true
-            };
-         }
-
          // cache options
          ExportOptionsCache exportOptionsCache = ExportOptionsCache.Create(exporterIFC, filterView);
          ExporterCacheManager.ExportOptionsCache = exportOptionsCache;
@@ -1538,12 +1687,15 @@ namespace Revit.IFC.Export.Exporter
       private void EndDocumentExportCommon(ExporterIFC exporterIFC, Document document,
          bool exportingLink)
       {
+         LogStageStart("EndExport");
+
          IFCFile file = exporterIFC.GetFile();
          IFCAnyHandle ownerHistory = ExporterCacheManager.OwnerHistoryHandle;
 
          using (IFCTransaction transaction = new IFCTransaction(file))
          {
             // Relate Ducts and Pipes to their coverings (insulations and linings)
+            LogStageStart("EndExport.MEPCoverings");
             foreach (KeyValuePair<ElementId, ElementId> ductOrPipe in ExporterCacheManager.MEPCache.CoveredElementsCache)
             {
                ElementId ductOrPipeId = ductOrPipe.Key;
@@ -1582,8 +1734,10 @@ namespace Revit.IFC.Export.Exporter
                   IFCInstanceExporter.CreateRelCoversBldgElements(file, relCoversGuid, ownerHistory, null, null, ductOrPipeHandle, coveringHandles);
                }
             }
+            LogStageDone("EndExport.MEPCoverings");
 
             // Relate stair components to stairs
+            LogStageStart("EndExport.StairRampRelations");
             foreach (KeyValuePair<ElementId, StairRampContainerInfo> stairRamp in ExporterCacheManager.StairRampContainerInfoCache)
             {
                StairRampContainerInfo stairRampInfo = stairRamp.Value;
@@ -1602,8 +1756,10 @@ namespace Revit.IFC.Export.Exporter
                   ExporterUtil.RelateObjects(exporterIFC, null, hnd, comps);
                }
             }
+            LogStageDone("EndExport.StairRampRelations");
 
             // create a Default site if we have latitude and longitude information.
+            LogStageStart("EndExport.DefaultSite");
             if (IFCAnyHandleUtil.IsNullOrHasNoValue(ExporterCacheManager.SiteHandle))
             {
                using (ProductWrapper productWrapper = ProductWrapper.Create(exporterIFC, true))
@@ -1666,8 +1822,10 @@ namespace Revit.IFC.Export.Exporter
                if (projectHasBuilding)
                   ExporterCacheManager.ContainmentCache.AddRelation(projectHandle, buildingHandle);
             }
+            LogStageDone("EndExport.DefaultSite");
 
             // relate assembly elements to assemblies
+            LogStageStart("EndExport.AssemblyRelations");
             foreach (KeyValuePair<ElementId, AssemblyInstanceInfo> assemblyInfoEntry in ExporterCacheManager.AssemblyInstanceCache)
             {
                AssemblyInstanceInfo assemblyInfo = assemblyInfoEntry.Value;
@@ -1700,8 +1858,10 @@ namespace Revit.IFC.Export.Exporter
                   ExporterCacheManager.ElementsInAssembliesCache.UnionWith(elementHandles);
                }
             }
+            LogStageDone("EndExport.AssemblyRelations");
 
             // relate group elements to groups
+            LogStageStart("EndExport.GroupRelations");
             foreach (KeyValuePair<ElementId, GroupInfo> groupEntry in ExporterCacheManager.GroupCache)
             {
                GroupInfo groupInfo = groupEntry.Value;
@@ -1740,10 +1900,14 @@ namespace Revit.IFC.Export.Exporter
                   }
                }
             }
+            LogStageDone("EndExport.GroupRelations");
 
             // Relate levels and products.  This may create new orphaned elements, so deal with those next.
+            LogStageStart("EndExport.RelateLevels");
             RelateLevels(exporterIFC, document);
+            LogStageDone("EndExport.RelateLevels");
 
+            LogStageStart("EndExport.OrphanedBuildingElements");
             IFCAnyHandle defContainerObjectPlacement = IFCAnyHandleUtil.GetObjectPlacement(siteOrbuildingHnd);
             Transform defContainerTrf = ExporterUtil.GetTotalTransformFromLocalPlacement(defContainerObjectPlacement);
             Transform defContainerInvTrf = defContainerTrf.Inverse;
@@ -1804,9 +1968,11 @@ namespace Revit.IFC.Export.Exporter
                      ownerHistory, null, null, relatedElementSetForSite, siteHandle);
                }
             }
+            LogStageDone("EndExport.OrphanedBuildingElements");
 
             // create an association between the IfcBuilding and spacial elements with no other containment
             // The name "GetRelatedProducts()" is misleading; this only covers spaces.
+            LogStageStart("EndExport.OrphanedBuildingSpaces");
             HashSet<IFCAnyHandle> buildingSpaces = RemoveContainedHandlesFromSet(ExporterCacheManager.LevelInfoCache.OrphanedSpaces);
             buildingSpaces.UnionWith(exporterIFC.GetRelatedProducts());
             if (buildingSpaces.Count > 0)
@@ -1858,8 +2024,10 @@ namespace Revit.IFC.Export.Exporter
                   ExporterCacheManager.ContainmentCache.AddRelations(siteHandle, null, relatedElementSetForSite);
                }
             }
+            LogStageDone("EndExport.OrphanedBuildingSpaces");
 
             // relate objects in containment cache.
+            LogStageStart("EndExport.ContainmentCache");
             foreach (KeyValuePair<IFCAnyHandle, HashSet<IFCAnyHandle>> container in ExporterCacheManager.ContainmentCache.Cache)
             {
                if (container.Value.Count() > 0)
@@ -1868,8 +2036,10 @@ namespace Revit.IFC.Export.Exporter
                   ExporterUtil.RelateObjects(exporterIFC, relationGUID, container.Key, container.Value);
                }
             }
+            LogStageDone("EndExport.ContainmentCache");
 
             // These elements are created internally, but we allow custom property sets for them.  Create them here.
+            LogStageStart("EndExport.ProjectProperties");
             using (ProductWrapper productWrapper = ProductWrapper.Create(exporterIFC, true))
             {
                if (projectHasBuilding)
@@ -1877,11 +2047,13 @@ namespace Revit.IFC.Export.Exporter
                if (projectInfo != null)
                   ExporterUtil.ExportRelatedProperties(exporterIFC, projectInfo, productWrapper);
             }
+            LogStageDone("EndExport.ProjectProperties");
 
             // TODO: combine all of the various material paths and caches; they are confusing and
             // prone to error.
 
             // create material layer associations
+            LogStageStart("EndExport.MaterialLayerRelations");
             foreach (KeyValuePair<IFCAnyHandle, ISet<IFCAnyHandle>> materialSetLayerUsage in ExporterCacheManager.MaterialSetUsageCache.Cache)
             {
                if ((materialSetLayerUsage.Value?.Count ?? 0) == 0)
@@ -1894,8 +2066,10 @@ namespace Revit.IFC.Export.Exporter
                   null, null, materialSetLayerUsage.Value,
                   materialSetLayerUsage.Key);
             }
+            LogStageDone("EndExport.MaterialLayerRelations");
 
             // create material constituent set associations
+            LogStageStart("EndExport.MaterialConstituentSetRelations");
             foreach (KeyValuePair<IFCAnyHandle, ISet<IFCAnyHandle>> relAssoc in ExporterCacheManager.MaterialConstituentSetCache.Cache)
             {
                if (IFCAnyHandleUtil.IsNullOrHasNoValue(relAssoc.Key))
@@ -1912,10 +2086,12 @@ namespace Revit.IFC.Export.Exporter
                IFCInstanceExporter.CreateRelAssociatesMaterial(file, guid, ownerHistory,
                   null, null, relatedObjects, relAssoc.Key);
             }
+            LogStageDone("EndExport.MaterialConstituentSetRelations");
 
             // Update the GUIDs for internally created IfcRoot entities, if any.
             // This is a little expensive because of the inverse attribute workaround, so we only
             // do it if any internal handles were created.
+            LogStageStart("EndExport.InternallyCreatedRootHandles");
             if (ExporterCacheManager.InternallyCreatedRootHandles.Count > 0)
             {
                // Patch IfcOpeningElement, IfcRelVoidsElement, IfcElementQuantity, and
@@ -1994,6 +2170,7 @@ namespace Revit.IFC.Export.Exporter
                   }
                }
             }
+            LogStageDone("EndExport.InternallyCreatedRootHandles");
 
             // For some older Revit files, we may have the same material name used for multiple
             // elements.  Without doing a significant amount of rewrite that likely isn't worth
@@ -2002,6 +2179,7 @@ namespace Revit.IFC.Export.Exporter
             IDictionary<string, int> UniqueMaterialNameCache = new Dictionary<string, int>();
 
             // create material associations
+            LogStageStart("EndExport.MaterialRelations");
             foreach (IFCAnyHandle materialHnd in ExporterCacheManager.MaterialRelationsCache.Keys)
             {
                // In some specific cased the reference object might have been deleted. Clear those from the Type cache first here
@@ -2032,8 +2210,10 @@ namespace Revit.IFC.Export.Exporter
                      null, null, materialRelationsHandles, materialHnd);
                }
             }
+            LogStageDone("EndExport.MaterialRelations");
 
             // create type relations
+            LogStageStart("EndExport.TypeRelations");
             foreach (IFCAnyHandle typeObj in ExporterCacheManager.TypeRelationsCache.Keys)
             {
                // In some specific cased the reference object might have been deleted. Clear those from the Type cache first here
@@ -2046,7 +2226,9 @@ namespace Revit.IFC.Export.Exporter
                      null, null, typeRelCache, typeObj);
                }
             }
+            LogStageDone("EndExport.TypeRelations");
 
+            LogStageStart("EndExport.TypePropertyRelations");
             // Create property set relations.
             ExporterCacheManager.CreatedInternalPropertySets.CreateRelations(file);
 
@@ -2076,14 +2258,18 @@ namespace Revit.IFC.Export.Exporter
                   }
                }
             }
+            LogStageDone("EndExport.TypePropertyRelations");
 
             // create space boundaries
+            LogStageStart("EndExport.SpaceBoundaries");
             foreach (SpaceBoundary boundary in ExporterCacheManager.SpaceBoundaryCache)
             {
                SpatialElementExporter.ProcessIFCSpaceBoundary(exporterIFC, boundary, file);
             }
+            LogStageDone("EndExport.SpaceBoundaries");
 
             // create wall/wall connectivity objects
+            LogStageStart("EndExport.WallConnections");
             if (ExporterCacheManager.WallConnectionDataCache.Count > 0 && !ExporterCacheManager.ExportOptionsCache.ExportAs4ReferenceView)
             {
                IList<IDictionary<ElementId, IFCAnyHandle>> hostObjects = exporterIFC.GetHostObjects();
@@ -2124,8 +2310,10 @@ namespace Revit.IFC.Export.Exporter
                   }
                }
             }
+            LogStageDone("EndExport.WallConnections");
 
             // create Zones and groups of Zones.
+            LogStageStart("EndExport.Zones");
             {
                // Collect zone group names as we go.  We will limit a zone to be only in one group.
                IDictionary<string, ISet<IFCAnyHandle>> zoneGroups = new Dictionary<string, ISet<IFCAnyHandle>>();
@@ -2193,8 +2381,10 @@ namespace Revit.IFC.Export.Exporter
                      zoneGroupHandle);
                }
             }
+            LogStageDone("EndExport.Zones");
 
             // create Space Occupants
+            LogStageStart("EndExport.SpaceOccupants");
             {
                foreach (string spaceOccupantName in ExporterCacheManager.SpaceOccupantInfoCache.Keys)
                {
@@ -2234,19 +2424,33 @@ namespace Revit.IFC.Export.Exporter
                   }
                }
             }
+            LogStageDone("EndExport.SpaceOccupants");
 
             // Create systems.
+            LogStageStart("EndExport.BuiltInSystems");
             ExportCachedSystem(exporterIFC, document, file, ExporterCacheManager.SystemsCache.BuiltInSystemsCache, ownerHistory, buildingHandle, projectHasBuilding, false);
+            LogStageDone("EndExport.BuiltInSystems");
+
+            LogStageStart("EndExport.ElectricalSystems");
             ExportCachedSystem(exporterIFC, document, file, ExporterCacheManager.SystemsCache.ElectricalSystemsCache, ownerHistory, buildingHandle, projectHasBuilding, true);
+            LogStageDone("EndExport.ElectricalSystems");
+
+            LogStageStart("EndExport.CableTraySystems");
             ExportCableTraySystem(document, file, ExporterCacheManager.MEPCache.CableElementsCache, ownerHistory, buildingHandle, projectHasBuilding);
+            LogStageDone("EndExport.CableTraySystems");
 
             // Add presentation layer assignments - this is in addition to those created internally.
             // Any representation in this list will override any internal assignment.
+            LogStageStart("EndExport.PresentationLayers");
             CreatePresentationLayerAssignments(exporterIFC, file);
+            LogStageDone("EndExport.PresentationLayers");
 
             // Add door/window openings.
+            LogStageStart("EndExport.DelayedDoorWindowOpenings");
             ExporterCacheManager.DoorWindowDelayedOpeningCreatorCache.ExecuteCreators(exporterIFC, document);
+            LogStageDone("EndExport.DelayedDoorWindowOpenings");
 
+            LogStageStart("EndExport.SpaceContainmentRelations");
             foreach (SpaceInfo spaceInfo in ExporterCacheManager.SpaceInfoCache.SpaceInfos.Values)
             {
                if (spaceInfo.RelatedElements.Count > 0)
@@ -2258,8 +2462,10 @@ namespace Revit.IFC.Export.Exporter
                       null, null, spaceInfo.RelatedElements, spaceInfo.SpaceHandle);
                }
             }
+            LogStageDone("EndExport.SpaceContainmentRelations");
 
             // Create RelAssociatesClassifications.
+            LogStageStart("EndExport.ClassificationRelations");
             foreach (var relAssociatesInfo in ExporterCacheManager.ClassificationCache.ClassificationRelations)
             {
                if (IFCAnyHandleUtil.IsNullOrHasNoValue(relAssociatesInfo.Key))
@@ -2272,14 +2478,18 @@ namespace Revit.IFC.Export.Exporter
                   relAssociatesInfo.Value.RelatedObjects,
                   relAssociatesInfo.Key);
             }
+            LogStageDone("EndExport.ClassificationRelations");
 
             // Delete handles that are marked for removal
+            LogStageStart("EndExport.DeleteHandles");
             foreach (IFCAnyHandle handleToDel in ExporterCacheManager.HandleToDeleteCache)
             {
                handleToDel.Delete();
             }
+            LogStageDone("EndExport.DeleteHandles");
 
             // Potentially modify elements with GUID values.
+            LogStageStart("EndExport.StoreGUIDs");
             if (ExporterCacheManager.GUIDsToStoreCache.Count > 0 && !ExporterCacheManager.ExportOptionsCache.ExportingLink)
             {
                using (SubTransaction st = new SubTransaction(document))
@@ -2296,19 +2506,31 @@ namespace Revit.IFC.Export.Exporter
                   st.Commit();
                }
             }
+            LogStageDone("EndExport.StoreGUIDs");
 
             // Export material properties
+            LogStageStart("EndExport.MaterialProperties");
             if (ExporterCacheManager.ExportOptionsCache.PropertySetOptions.ExportMaterialPsets)
                MaterialPropertiesUtil.ExportMaterialProperties(file, exporterIFC);
+            LogStageDone("EndExport.MaterialProperties");
 
             // Create unit assignement
+            LogStageStart("EndExport.UnitAssignment");
             IFCAnyHandle units = IFCInstanceExporter.CreateUnitAssignment(file, UnitMappingUtil.GetUnitsToAssign());
             ExporterCacheManager.ProjectHandle.SetAttribute("UnitsInContext", units);
+            LogStageDone("EndExport.UnitAssignment");
 
             // Allow native code to remove some unused handles and clear internal caches.
+            LogStageStart("EndExport.EndExportInternal");
             ExporterIFCUtils.EndExportInternal(exporterIFC);
+            LogStageDone("EndExport.EndExportInternal");
+
+            LogStageStart("EndExport.TransactionCommit");
             transaction.Commit();
+            LogStageDone("EndExport.TransactionCommit");
          }
+
+         LogStageDone("EndExport");
       }
 
       private class IFCFileDocumentInfo
@@ -2408,6 +2630,9 @@ namespace Revit.IFC.Export.Exporter
       /// <param name="document">The document to export.</param>
       private void WriteIFCFile(IFCFile file, IFCFileDocumentInfo ifcFileDocumentInfo)
       {
+         LogStageStart("WriteIFCFile");
+         LogStageStart("WriteIFCFile.Header");
+
          if (ifcFileDocumentInfo == null)
             ifcFileDocumentInfo = new IFCFileDocumentInfo(null);
 
@@ -2510,14 +2735,19 @@ namespace Revit.IFC.Export.Exporter
 
             IFCInstanceExporter.CreateFileName(file, exportOptionsCache.FileNameOnly, author, organization,
                ifcFileDocumentInfo.VersionName, versionInfos, fHItem.Authorization);
+            LogStageDone("WriteIFCFile.Header");
 
+            LogStageStart("WriteIFCFile.HeaderCommit");
             transaction.Commit();
+            LogStageDone("WriteIFCFile.HeaderCommit");
 
+            LogStageStart("WriteIFCFile.PrepareWriteOptions");
             IFCFileWriteOptions writeOptions = new IFCFileWriteOptions()
             {
                FileName = exportOptionsCache.FullFileName,
                FileFormat = exportOptionsCache.IFCFileFormat
             };
+            LogStageDone("WriteIFCFile.PrepareWriteOptions");
 
             // Reuse almost all of the information above to write out extra copies of the IFC file.
             if (exportOptionsCache.ExportingLink)
@@ -2541,17 +2771,25 @@ namespace Revit.IFC.Export.Exporter
                   if (linkInstanceFileName != null)
                      writeOptions.FileName = linkInstanceFileName;
 
+                  string linkWriteStage = "WriteIFCFile.LinkFileWrite | index=" + ii + " | file=" + writeOptions.FileName;
+                  LogStageStart(linkWriteStage);
                   file.Write(writeOptions);
+                  LogStageDone(linkWriteStage);
                }
             }
             else
             {
+               string fileWriteStage = "WriteIFCFile.FileWrite | file=" + writeOptions.FileName;
+               LogStageStart(fileWriteStage);
                file.Write(writeOptions);
+               LogStageDone(fileWriteStage);
             }
 
             // Display the message to the user when the IFC File has been completely exported 
             statusBar.Set(Resources.IFCExportComplete);
          }
+
+         LogStageDone("WriteIFCFile");
       }
 
       private string GetLanguageExtension(LanguageType langType)
