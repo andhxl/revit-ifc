@@ -77,18 +77,12 @@ function Test-GitRef {
 function Resolve-BuildRef {
     param([string] $Branch)
 
-    $candidates = @(
-        [pscustomobject]@{ Ref = "refs/heads/$Branch"; SwitchRef = $Branch; IsRemote = $false },
-        [pscustomobject]@{ Ref = "refs/remotes/origin/$Branch"; SwitchRef = "origin/$Branch"; IsRemote = $true }
-    )
-
-    foreach ($candidate in $candidates) {
-        if (Test-GitRef -Ref $candidate.Ref) {
-            return $candidate
-        }
+    $ref = "refs/remotes/origin/$Branch"
+    if (Test-GitRef -Ref $ref) {
+        return "origin/$Branch"
     }
 
-    throw "Branch '$Branch' was not found locally or at origin."
+    throw "Branch '$Branch' was not found at origin."
 }
 
 try {
@@ -116,6 +110,9 @@ $originalCommit = (& git -C $script:RepoRoot rev-parse HEAD).Trim()
 if ($LASTEXITCODE -ne 0 -or -not $originalCommit) {
     throw 'Could not determine the current Git revision.'
 }
+
+Write-Host 'Fetching the latest branches from origin...'
+Invoke-Git -Arguments @('fetch', '--prune', 'origin')
 
 $resolvedMsBuildPath = Find-MSBuild -ExplicitPath $MsBuildPath
 $projectRelativePath = 'Source\Revit.IFC.Export\Revit.IFC.Export.csproj'
@@ -147,15 +144,8 @@ try {
                 throw "Unsupported year '$year'. Expected a value from 2000 through 2099."
             }
 
-            $buildRef = Resolve-BuildRef -Branch $branch
-            $actualRef = $buildRef.SwitchRef
-
-            if ($buildRef.IsRemote) {
-                Invoke-Git -Arguments @('switch', '--quiet', '--detach', $actualRef)
-            }
-            else {
-                Invoke-Git -Arguments @('switch', '--quiet', $actualRef)
-            }
+            $actualRef = Resolve-BuildRef -Branch $branch
+            Invoke-Git -Arguments @('switch', '--quiet', '--detach', $actualRef)
 
             $projectPath = Join-Path $script:RepoRoot $projectRelativePath
             if (-not (Test-Path -LiteralPath $projectPath -PathType Leaf)) {
