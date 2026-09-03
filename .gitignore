@@ -482,4 +482,6 @@ $RECYCLE.BIN/
 *.swp
 
 # Revit IFC override build output
-/Override/
+/Override/*
+!/Override/Инструкция.txt
+!/Override/WriteIFCExportedElements.png

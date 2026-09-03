@@ -1,0 +1,36 @@
+Установка
+
+Найдите файл Revit.IFC.Export.dll в папке установки IFC Exporter. Папка зависит от способа установки.
+
+Например, для Revit 2019:
+
+Если IFC Exporter установлен отдельно:
+C:\ProgramData\Autodesk\ApplicationPlugins\IFC 2019.bundle\Contents\2019
+
+Если используется встроенный в Revit экспортер:
+C:\Program Files\Autodesk\Revit 2019
+
+Сделайте резервную копию существующего файла Revit.IFC.Export.dll.
+Скопируйте новую версию Revit.IFC.Export.dll в эту же папку с заменой существующего файла.
+При следующем запуске Revit, если появится запрос на загрузку измененной сборки, выберите "Всегда загружать".
+
+
+Включение логирования
+
+Для включения логирования добавьте переменную среды:
+WriteIFCExportedElements = 1
+
+Пример настройки переменной среды приведен на изображении "WriteIFCExportedElements.png".
+
+Лог сохраняется в файл diagnostics.log.
+
+Для Revit 2019 и более старых версий:
+%TEMP%\Revit.IFC.Export\<ID процесса>\diagnostics.log
+
+Для Revit 2020 и более новых версий:
+%TEMP%\<GUID>\Revit.IFC.Export\<ID процесса>\diagnostics.log
+
+Пример для Revit 2020 и более новых версий:
+D:\Temp\6707d9de-f6ac-46d1-97cc-9ca2aa4f60b7\Revit.IFC.Export\24852\diagnostics.log
+
+Папку с GUID удобнее искать, отсортировав содержимое %TEMP% по дате изменения.
